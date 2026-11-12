@@ -52,9 +52,17 @@ docker compose exec backend python -m scripts.seed_demo
 
 随机数来自标准库固定seed，任务按ID排序抽样，输入重排不改变序列。只支持零等待FS，不含日历、资源占用、共享天气或人员共因，也不是资源约束排程。
 
+`backend/src/services/paired.py::compare(base_snapshot, compare_snapshot, samples, seed)` 提供两份冻结情景的配对风险比较，用公共随机分位消除抽样噪声：
+
+- 每个task_id拥有独立分位流 `paired|seed|task_id`，同一任务在两个情景的第k个样本取相同分位u；分位与任务顺序、任务集合无关，任务增删或重排后既有任务分位不变，样本数变化保持前缀一致。
+- 工期按各自情景的a/m/b经Beta-PERT逆累积分布取值 `a+(b-a)*I^{-1}_u(alpha,beta)`；逆累积由连分式+牛顿法纯标准库计算，确定可复现。a=m=b仍为点质量。
+- 每侧每个样本按各自冻结的FS边重新计算完整CPM；工期差=对比完工−基准完工，负值为提前。deadline从不参与配对计算，截止期变化不影响工期差。
+- 提前/持平/延后按工期差与1e-8小时容差划分，输出三者次数/分母/比例、工期差直方图与p05/p50/p80/p95及两侧完工均值；保存全部工期差样本。
+- 比较记录冻结两份来源情景的版本与完整快照；上游工作包更新后按原快照重算，结果与首次逐位一致。配对比较不修改原独立推演运行、交付复核与已批准报告。
+
 ## 实体、技术与目录
 
-六实体 WorkPackage、TaskDependency、DurationScenario、ScheduleRun、DeliveryReview、Report，贯穿model/schema/service/route、前端API/store与领域页。情景按工作包版本化并冻结完整任务和边；运行保存结果/校验和；复核新增不可变版本；归档绑定接受复核ID，后续待补充版本不修改旧CSV。
+七实体 WorkPackage、TaskDependency、DurationScenario、ScheduleRun、DeliveryReview、Report、ScenarioComparison，贯穿model/schema/service/route、前端API/store与领域页。情景按工作包版本化并冻结完整任务和边；运行保存结果/校验和；复核新增不可变版本；归档绑定接受复核ID，后续待补充版本不修改旧CSV。配对比较冻结两份来源情景快照、版本与配对seed，经同一Redis队列由worker计算，保存提前/持平/延后比例与工期差分布，可在页面回看并按原快照重算。
 
 | 部分 | 技术 |
 |---|---|
@@ -64,7 +72,7 @@ docker compose exec backend python -m scripts.seed_demo
 | 数据库 | MySQL8.4，deadline为DOUBLE、计数/seed为INTEGER |
 | Docker | 恰好frontend/backend/worker/db/redis五服务，全部真实健康检查 |
 
-`frontend/src` 分api/stores/types/components/common/hooks/pages/router/utils/constants；六领域页加登录，DAG、风险摘要、情景条跨页共享。`backend/src` 分models/schemas/services/controllers/routes/middlewares/utils/constants/config，seed在 `backend/scripts/seed_demo.py`，初始schema说明在 `backend/migrations`。测试、截图和报告仅在批根 `test-artifacts/gb-2410`。依赖使用匹配package/lock执行npm ci，没有替换依赖名称。
+`frontend/src` 分api/stores/types/components/common/hooks/pages/router/utils/constants；七领域页加登录，DAG、风险摘要、情景条跨页共享。`backend/src` 分models/schemas/services/controllers/routes/middlewares/utils/constants/config，seed在 `backend/scripts/seed_demo.py`，初始schema说明在 `backend/migrations`。测试、截图和报告仅在批根 `test-artifacts/gb-2410`。依赖使用匹配package/lock执行npm ci，没有替换依赖名称。
 
 `.env.example` 包含COMPOSE_PROJECT_NAME=package-criticality、FRONTEND_PORT=18239、BACKEND_PORT=19239、DB_PORT=17739、SEED_DEMO=true、JWT_SECRET；DATABASE_URL/REDIS_URL由compose注入。数据库、Redis、worker产物为三个命名卷，Nginx代理 `/api/` 并做SPA回落，健康检查使用127.0.0.1。本地开发前端 `npm ci && npm run dev`，API `uvicorn src.main:app --host 0.0.0.0`，worker `python -m src.worker`，需配置可连接的数据库/Redis地址。
 

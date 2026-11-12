@@ -1,8 +1,9 @@
 import json
 from sqlalchemy import select,func
 from src.config.database import Base,engine,Session
-from src.models import User,WorkPackage,TaskDependency,DurationScenario,ScheduleRun,DeliveryReview,Report
+from src.models import User,WorkPackage,TaskDependency,DurationScenario,ScheduleRun,DeliveryReview,Report,ScenarioComparison
 from src.services.analysis import analyze
+from src.services.paired import compare
 from src.utils.security import hash_password
 from src.utils.time import now
 from src.utils.serialization import serialize
@@ -24,7 +25,20 @@ def seed():
    db.add(DurationScenario(id='demo-scenario',name='通道加固·32小时交付风险基线',package_id='demo-package',version=1,deadline=32.,samples=1500,seed=2410,snapshot=snapshot,created_at=now()))
   db.flush()
   if not db.get(ScheduleRun,'demo-run'):db.add(ScheduleRun(id='demo-run',scenario_id='demo-scenario',status='completed',result=analyze(db.get(DurationScenario,'demo-scenario').snapshot,db.get(DurationScenario,'demo-scenario')),error='',created_at=now()));db.flush()
+  if not db.get(WorkPackage,'demo-package-compressed'):
+   compressed=[t if t['a']==t['b'] else {'task_id':t['task_id'],'name':t['name'],'a':float(round(t['m']*.49,2)),'m':float(round(t['m']*.75,2)),'b':float(round(t['m']*1.2,2))} for t in tasks]
+   db.add(WorkPackage(id='demo-package-compressed',name='铎川·检修通道加固工作包·赶工方案',source='duochuan_workpackage_20261112.json(赶工压缩版)',tasks=compressed,created_at=now()));db.flush()
+   for i,(a,b) in enumerate(edges,1):db.add(TaskDependency(id=f'demo-compressed-edge-{i}',package_id='demo-package-compressed',predecessor=f'T{a:02}',successor=f'T{b:02}',created_at=now()))
+   db.flush()
+  if not db.get(DurationScenario,'demo-scenario-compressed'):
+   snapshot={'package':serialize(db.get(WorkPackage,'demo-package-compressed')),'dependencies':[serialize(e) for e in db.scalars(select(TaskDependency).where(TaskDependency.package_id=='demo-package-compressed').order_by(TaskDependency.predecessor,TaskDependency.successor))]}
+   db.add(DurationScenario(id='demo-scenario-compressed',name='通道加固·赶工方案·32小时交付风险',package_id='demo-package-compressed',version=1,deadline=32.,samples=1500,seed=2410,snapshot=snapshot,created_at=now()))
+  db.flush()
+  if not db.get(ScenarioComparison,'demo-comparison'):
+   base=db.get(DurationScenario,'demo-scenario');compressed_scenario=db.get(DurationScenario,'demo-scenario-compressed')
+   db.add(ScenarioComparison(id='demo-comparison',name='通道加固·赶工方案配对比较',base_scenario_id=base.id,compare_scenario_id=compressed_scenario.id,base_version=base.version,compare_version=compressed_scenario.version,samples=1500,seed=2410,base_snapshot=base.snapshot,compare_snapshot=compressed_scenario.snapshot,status='completed',result=compare(base.snapshot,compressed_scenario.snapshot,1500,2410),error='',created_at=now()))
+  db.flush()
   if not db.get(DeliveryReview,'demo-review'):db.add(DeliveryReview(id='demo-review',run_id='demo-run',version=1,note='已核对FS依赖与基线时差，模拟每次重算关键度；独立工期未涵盖共享资源、天气共因，32小时达标比例不是交付保证。',decision='accepted',author='analyst@duochuan.demo',created_at=now()));db.flush()
   if not db.get(Report,'demo-report'):db.add(Report(id='demo-report',run_id='demo-run',review_id='demo-review',title='铎川通道加固·基线与风险复核',published_by='admin@duochuan.demo',created_at=now()))
-  db.commit();return {m.__tablename__:db.scalar(select(func.count()).select_from(m)) for m in (User,WorkPackage,TaskDependency,DurationScenario,ScheduleRun,DeliveryReview,Report)}
+  db.commit();return {m.__tablename__:db.scalar(select(func.count()).select_from(m)) for m in (User,WorkPackage,TaskDependency,DurationScenario,ScheduleRun,DeliveryReview,Report,ScenarioComparison)}
 if __name__=='__main__':print(json.dumps(seed(),ensure_ascii=False))

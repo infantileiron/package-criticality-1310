@@ -1,3 +1,4 @@
 -- Initial declarative schema lives in src/models; metadata.create_all creates missing tables.
 -- Work package input and dependency rows are frozen into immutable scenario version JSON.
+-- Paired comparisons freeze both scenario snapshots into scenario_comparisons; reruns recompute from those stored snapshots only.
 -- deadline uses DOUBLE, sample counts and seed use INTEGER; no production migration rollback.
